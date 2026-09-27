@@ -1,6 +1,8 @@
 // EdgeOne Pages 云函数：数字分身
 // 路由：/api/chat（由 /functions 目录结构自动生成）
 // 密钥：从平台环境变量 DEEPSEEK_API_KEY 读取，不在代码里
+// 注意：兼容 EdgeOne 边缘函数运行环境——统一使用 new Response() + JSON.stringify，
+// 不使用 Response.json() 静态方法（部分运行环境不支持，会导致 545 执行异常）。
 
 const SYSTEM_PROMPT = `你是"林安"的数字分身，在她的个人主页上代替她与访客（朋友、潜在合作伙伴、面试官）文字交流。
 
@@ -19,29 +21,40 @@ const SYSTEM_PROMPT = `你是"林安"的数字分身，在她的个人主页上�
 3. 只依据上面的事实回答；不知道的如实说明，不要编造作品、经历或联系方式。
 4. 对方如果想合作或面试，可以直接给出邮箱或微信，并说明自己最近在整理作品集。`;
 
-export async function onRequest({ request, env }) {
+function jsonResponse(data, status) {
+  return new Response(JSON.stringify(data), {
+    status: status || 200,
+    headers: { 'Content-Type': 'application/json; charset=utf-8' }
+  });
+}
+
+export async function onRequest(context) {
+  const request = context.request;
+  const env = context.env || {};
+
   if (request.method !== 'POST') {
-    return Response.json({ error: '只支持 POST 请求' }, { status: 405 });
+    return jsonResponse({ error: '只支持 POST 请求' }, 405);
   }
 
   const apiKey = env.DEEPSEEK_API_KEY;
   if (!apiKey) {
-    return Response.json(
+    return jsonResponse(
       { error: '云函数未配置 DEEPSEEK_API_KEY 环境变量' },
-      { status: 500 }
+      500
     );
   }
 
   let incoming;
   try {
     incoming = await request.json();
-  } catch {
-    return Response.json({ error: '请求体不是合法 JSON' }, { status: 400 });
+  } catch (e) {
+    return jsonResponse({ error: '请求体不是合法 JSON' }, 400);
   }
 
   const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
-  if (Array.isArray(incoming.messages)) {
-    for (const m of incoming.messages) {
+  if (incoming && Array.isArray(incoming.messages)) {
+    for (let i = 0; i < incoming.messages.length; i++) {
+      const m = incoming.messages[i];
       if (m && (m.role === 'user' || m.role === 'assistant') && m.content) {
         messages.push({ role: m.role, content: String(m.content) });
       }
@@ -53,33 +66,35 @@ export async function onRequest({ request, env }) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        'Authorization': 'Bearer ' + apiKey
       },
       body: JSON.stringify({
         model: 'deepseek-chat',
-        messages,
+        messages: messages,
         temperature: 0.8,
-        max_tokens: 500,
-      }),
+        max_tokens: 500
+      })
     });
 
-    const data = await resp.json();
+    const text = await resp.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch (e) { /* 保持 data 为 null */ }
+
     if (!resp.ok) {
-      return Response.json(
-        { error: `调用大模型失败：${data.error?.message || resp.status}` },
-        { status: 502 }
-      );
+      const msg = (data && data.error && data.error.message)
+        ? data.error.message
+        : ('HTTP ' + resp.status);
+      return jsonResponse({ error: '调用大模型失败：' + msg }, 502);
     }
 
-    const reply = data.choices?.[0]?.message?.content;
+    const reply = data && data.choices && data.choices[0] &&
+      data.choices[0].message && data.choices[0].message.content;
     if (!reply) {
-      return Response.json({ error: '大模型返回内容为空' }, { status: 502 });
+      return jsonResponse({ error: '大模型返回内容为空' }, 502);
     }
-    return Response.json({ reply });
+    return jsonResponse({ reply: reply });
   } catch (err) {
-    return Response.json(
-      { error: `云函数请求异常：${err.message}` },
-      { status: 502 }
-    );
+    const msg = (err && err.message) ? err.message : '未知异常';
+    return jsonResponse({ error: '云函数请求异常：' + msg }, 502);
   }
 }

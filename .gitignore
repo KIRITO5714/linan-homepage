@@ -1,0 +1,13 @@
+# 密钥配置，禁止提交
+config.json
+
+# 仅本机使用的 PowerShell 服务器（云端由 Pages 云函数代替）
+server.ps1
+
+# EdgeOne CLI 本地文件
+.edgeone/
+edgeone.local.json
+
+# 临时文件
+_t*.json
+_*.json

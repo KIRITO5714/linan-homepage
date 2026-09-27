@@ -426,9 +426,11 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: messages })
     });
-    var data = await res.json();
-    if (!res.ok || !data.reply) {
-      throw new Error(data.error || ('HTTP ' + res.status));
+    var text = await res.text();
+    var data = null;
+    try { data = JSON.parse(text); } catch (e) { /* 非 JSON（如被平台拦截的页面） */ }
+    if (!res.ok || !data || !data.reply) {
+      throw new Error((data && data.error) ? data.error : ('HTTP ' + res.status));
     }
     return data.reply;
   }
@@ -479,8 +481,9 @@
       history.push({ role: 'assistant', content: reply });
     } catch (err) {
       removeTyping();
+      var detail = (err && err.message) ? err.message : '未知错误';
       addMessage(
-        '我现在暂时连不上大脑：本地服务可能没启动，或还没在 config.json 里配置 API Key。配好后刷新页面再试一次就好～',
+        '我暂时连不上大脑，原因是：' + detail + '。请把这句话原样发给林安，她能据此排查。',
         'bot'
       );
     } finally {
